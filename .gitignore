@@ -1,0 +1,19 @@
+# Security — never commit these
+.env
+*.key
+*secret*
+*credentials*
+trivyfs.txt
+trivyimage.txt
+dependency-check-report.xml
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Build artifacts
+dist/
+build/
+
+# Docker
+.dockerignore
