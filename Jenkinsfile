@@ -1,28 +1,26 @@
 // ============================================================
 // Netflix Clone - DevSecOps CI/CD Pipeline
-// Version: 2.0.0
-// Last Updated: 2026-04-20
-// Fixes:
-//   - TMDB API key moved to Jenkins credentials (no hardcoding)
-//   - Trivy image scan now targets the correct built image
-//   - Docker image tag uses BUILD_NUMBER for version control
-//   - Added BUILD_VERSION env var for traceability
-//   - Deployment stage uses versioned image tag
-//   - Upgraded to JDK 21 for stability
+// Target: Docker Deployment (Pre-Kubernetes)
+// Version: 2.1.0
+// Fixes applied:
+//   1. env.BUILD_NUMBER → BUILD_NUMBER (reliable across all Jenkins versions)
+//   2. waitForQualityGate wrapped in timeout(2 min) to prevent hanging
+//   3. NVD key passed via temp properties file (no inline secret in args)
+//   4. jdk21 tool name — must match Jenkins Global Tool Configuration exactly
 // ============================================================
 
 pipeline {
     agent any
 
     tools {
-        jdk 'jdk21'       // Upgraded from jdk17 for stability
-        nodejs 'node18'   // Upgraded from node16 (EOL) to node18 LTS
+        jdk 'jdk21'       // Must match name in: Manage Jenkins → Global Tool Configuration → JDK
+        nodejs 'node18'   // Must match name in: Manage Jenkins → Global Tool Configuration → NodeJS
     }
 
     environment {
         SCANNER_HOME      = tool 'sonar-scanner'
-        DOCKER_IMAGE      = "abhay/netflix"
-        BUILD_VERSION     = "2.0.${env.BUILD_NUMBER}"   // e.g. 2.0.42
+        DOCKER_IMAGE      = "abhayverma007/netflix"
+        BUILD_VERSION     = "2.0.${BUILD_NUMBER}"        // FIX 1: was env.BUILD_NUMBER
         IMAGE_TAG         = "${DOCKER_IMAGE}:${BUILD_VERSION}"
         IMAGE_TAG_LATEST  = "${DOCKER_IMAGE}:latest"
     }
@@ -43,7 +41,7 @@ pipeline {
         // ----------------------------------------------------------
         stage('Checkout from Git') {
             steps {
-                git branch: 'main', url: 'https://github.com/AbhayVerma007/DevSecOps-Netflix-Clone-CI-CD-with-Monitoring-Email.git'
+                git branch: 'main', url: 'https://github.com/Aj7Ay/Netflix-clone.git'
             }
         }
 
@@ -65,11 +63,15 @@ pipeline {
 
         // ----------------------------------------------------------
         // Stage 4 – SonarQube Quality Gate
+        // FIX 2: wrapped in timeout — prevents pipeline hanging
+        //         indefinitely if SonarQube never responds
         // ----------------------------------------------------------
         stage('Quality Gate') {
             steps {
                 script {
-                    waitForQualityGate abortPipeline: false, credentialsId: 'Sonar-token'
+                    timeout(time: 2, unit: 'MINUTES') {
+                        waitForQualityGate abortPipeline: false, credentialsId: 'Sonar-token'
+                    }
                 }
             }
         }
@@ -85,11 +87,19 @@ pipeline {
 
         // ----------------------------------------------------------
         // Stage 6 – OWASP Dependency Check (filesystem scan)
+        // FIX 3: NVD key written to a temp properties file instead of
+        //         passing inline — avoids secret leaking in debug logs
         // ----------------------------------------------------------
         stage('OWASP FS Scan') {
             steps {
-                dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit',
-                                odcInstallation: 'DP-Check'
+                script {
+                    withCredentials([string(credentialsId: 'nvd-api-key', variable: 'NVD_KEY')]) {
+                        sh 'echo "nvd.api.key=${NVD_KEY}" > /tmp/nvd.properties'
+                        dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit --propertyfile /tmp/nvd.properties',
+                                        odcInstallation: 'DP-Check'
+                        sh 'rm -f /tmp/nvd.properties'
+                    }
+                }
                 dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
             }
         }
@@ -105,8 +115,6 @@ pipeline {
 
         // ----------------------------------------------------------
         // Stage 8 – Docker build & push
-        //   FIX: TMDB key now pulled from Jenkins credentials, NOT hardcoded
-        //   FIX: Tags image with BUILD_VERSION for version control
         // ----------------------------------------------------------
         stage('Docker Build & Push') {
             steps {
@@ -125,8 +133,6 @@ pipeline {
 
         // ----------------------------------------------------------
         // Stage 9 – Trivy image scan
-        //   FIX: Was scanning 'sevenajay/netflix:latest' (wrong image).
-        //        Now scans the image that was actually built above.
         // ----------------------------------------------------------
         stage('Trivy Image Scan') {
             steps {
@@ -139,7 +145,6 @@ pipeline {
         // ----------------------------------------------------------
         stage('Deploy to Container') {
             steps {
-                // Remove old container if running, then start fresh with versioned image
                 sh '''
                     docker rm -f netflix 2>/dev/null || true
                     docker run -d --name netflix -p 8081:80 ${IMAGE_TAG}
@@ -164,7 +169,6 @@ pipeline {
                             restrictKubeConfigAccess: false,
                             serverUrl: ''
                         ) {
-                            // Inject versioned image tag into the deployment manifest on-the-fly
                             sh "sed -i 's|IMAGE_PLACEHOLDER|${IMAGE_TAG}|g' deployment.yml"
                             sh 'kubectl apply -f deployment.yml'
                             sh 'kubectl apply -f service.yml'
@@ -176,24 +180,24 @@ pipeline {
         */
     }
 
-        // ----------------------------------------------------------
-        // Post – always send email with scan reports attached
-        // ----------------------------------------------------------
-        post {
-            always {
-                emailext(
-                    attachLog: true,
-                    subject: "[${currentBuild.result}] Build #${BUILD_VERSION} - ${env.JOB_NAME}",
-                    body: """
-                        <b>Project:</b> ${env.JOB_NAME}<br/>
-                        <b>Build Version:</b> ${BUILD_VERSION}<br/>
-                        <b>Build Number:</b> ${env.BUILD_NUMBER}<br/>
-                        <b>Status:</b> ${currentBuild.result}<br/>
-                        <b>URL:</b> ${env.BUILD_URL}<br/>
-                    """,
-                    to: 'vermaabhay085@gmail.com',
-                    attachmentsPattern: 'trivyfs.txt,trivyimage.txt'
-                )
-            }
+    // ----------------------------------------------------------
+    // Post – always send email with scan reports attached
+    // ----------------------------------------------------------
+    post {
+        always {
+            emailext(
+                attachLog: true,
+                subject: "[${currentBuild.result}] Build #${BUILD_VERSION} - ${env.JOB_NAME}",
+                body: """
+                    <b>Project:</b> ${env.JOB_NAME}<br/>
+                    <b>Build Version:</b> ${BUILD_VERSION}<br/>
+                    <b>Build Number:</b> ${env.BUILD_NUMBER}<br/>
+                    <b>Status:</b> ${currentBuild.result}<br/>
+                    <b>URL:</b> ${env.BUILD_URL}<br/>
+                """,
+                to: 'dhaliwalakshit@gmail.com',
+                attachmentsPattern: 'trivyfs.txt,trivyimage.txt'
+            )
         }
-    }        
+    }
+}
