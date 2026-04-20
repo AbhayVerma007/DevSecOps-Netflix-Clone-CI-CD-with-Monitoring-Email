@@ -8,19 +8,20 @@
 //   - Docker image tag uses BUILD_NUMBER for version control
 //   - Added BUILD_VERSION env var for traceability
 //   - Deployment stage uses versioned image tag
+//   - Upgraded to JDK 21 for stability
 // ============================================================
 
 pipeline {
     agent any
 
     tools {
-        jdk 'jdk17'
+        jdk 'jdk21'       // Upgraded from jdk17 for stability
         nodejs 'node18'   // Upgraded from node16 (EOL) to node18 LTS
     }
 
     environment {
         SCANNER_HOME      = tool 'sonar-scanner'
-        DOCKER_IMAGE      = "rutik/netflix"
+        DOCKER_IMAGE      = "abhay/netflix"
         BUILD_VERSION     = "2.0.${env.BUILD_NUMBER}"   // e.g. 2.0.42
         IMAGE_TAG         = "${DOCKER_IMAGE}:${BUILD_VERSION}"
         IMAGE_TAG_LATEST  = "${DOCKER_IMAGE}:latest"
@@ -42,7 +43,7 @@ pipeline {
         // ----------------------------------------------------------
         stage('Checkout from Git') {
             steps {
-                git branch: 'main', url: 'https://github.com/Aj7Ay/Netflix-clone.git'
+                git branch: 'main', url: 'https://github.com/AbhayVerma007/DevSecOps-Netflix-Clone-CI-CD-with-Monitoring-Email.git'
             }
         }
 
@@ -147,8 +148,9 @@ pipeline {
         }
 
         // ----------------------------------------------------------
-        // Stage 11 – Deploy to Kubernetes
+        // Stage 11 – Deploy to Kubernetes (TEMPORARILY DISABLED)
         // ----------------------------------------------------------
+        /*
         stage('Deploy to Kubernetes') {
             steps {
                 script {
@@ -171,26 +173,27 @@ pipeline {
                 }
             }
         }
+        */
     }
 
-    // ----------------------------------------------------------
-    // Post – always send email with scan reports attached
-    // ----------------------------------------------------------
-    post {
-        always {
-            emailext(
-                attachLog: true,
-                subject: "[${currentBuild.result}] Build #${BUILD_VERSION} - ${env.JOB_NAME}",
-                body: """
-                    <b>Project:</b> ${env.JOB_NAME}<br/>
-                    <b>Build Version:</b> ${BUILD_VERSION}<br/>
-                    <b>Build Number:</b> ${env.BUILD_NUMBER}<br/>
-                    <b>Status:</b> ${currentBuild.result}<br/>
-                    <b>URL:</b> ${env.BUILD_URL}<br/>
-                """,
-                to: 'rutik@gmail.com',
-                attachmentsPattern: 'trivyfs.txt,trivyimage.txt'
-            )
+        // ----------------------------------------------------------
+        // Post – always send email with scan reports attached
+        // ----------------------------------------------------------
+        post {
+            always {
+                emailext(
+                    attachLog: true,
+                    subject: "[${currentBuild.result}] Build #${BUILD_VERSION} - ${env.JOB_NAME}",
+                    body: """
+                        <b>Project:</b> ${env.JOB_NAME}<br/>
+                        <b>Build Version:</b> ${BUILD_VERSION}<br/>
+                        <b>Build Number:</b> ${env.BUILD_NUMBER}<br/>
+                        <b>Status:</b> ${currentBuild.result}<br/>
+                        <b>URL:</b> ${env.BUILD_URL}<br/>
+                    """,
+                    to: 'vermaabhay085@gmail.com',
+                    attachmentsPattern: 'trivyfs.txt,trivyimage.txt'
+                )
+            }
         }
-    }
-}
+    }        
